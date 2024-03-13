@@ -103,21 +103,145 @@ The FIT은 트레이너와 트레이니(회원)가 상호작용하는 플랫폼�
 <summary>
 <b>git action script</b>
 </summary>
-```python
-print('hello')
-```
+<pre>
+  <code>
+name: deploy back end
+#test
+on:
+  push:
+    branches:
+      - deploy_backup
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout github
+        uses: actions/checkout@v2
+      - name: install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.25.9"
+        id: install
+      - name: configure aws
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_ID }}
+          aws-region: ap-northeast-2
+      - name: update cluster information
+        run: aws eks update-kubeconfig --name thefit --region ap-northeast-2
+      - name: Login to ecr
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: build and push docker image to ecr
+        env:
+#          수정
+          REGISTRY: 346903264902.dkr.ecr.ap-northeast-2.amazonaws.com
+          REPOSITORY: thefit
+          IMAGE_TAG: latest
+        run: |
+          docker build \
+          -t $REGISTRY/$REPOSITORY:$IMAGE_TAG \
+          -f ./TheFit/Dockerfile ./TheFit
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+      - name: eks kubectl apply
+        run: |
+          kubectl apply -f ./TheFit/k8s/thefit-backend-deploy.yml
+          kubectl rollout restart deployment thefit-backend-deploy
+    
+  </code>
+</pre>
 </details>
 
 <details>
 <summary>
 <b>jenkins script</b>
 </summary>
+<pre>
+<code>
+  pipeline{
+    agent any
+    triggers{
+        pollSCM("*/1 * * * *")
+    }
+    tools{
+        nodejs 'nodejs20'
+    }
+    environment{
+        AWS_ACCESS_KEY_ID = credentials('AWS_ACCESS_KEY_ID')
+        AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
+        AWS_REGION = 'ap-northeast-2'
+    }
+    stages{
+        stage('Checkout'){
+            steps{
+                git url:'https://github.com/beyond-sw-camp-spring-project-The-fit/The-fit.git',
+                credentialsId: 'github_token',
+                branch: 'front'
+            }
+        }
+        stage('npm install') {
+            steps {
+                dir('cal') {
+                     dir('cal') {
+                         sh 'npm install'
+                     }
+                }
+            }
+        }
+        stage('npm run build') {
+            steps {
+                dir('cal') {
+                     dir('cal') {
+                         sh 'npm run build'
+                     }
+                }
+            }
+        }
+        stage('aws cli configure'){
+            steps{
+                sh '''
+                aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+                aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+                aws configure set default.region $AWS_REGION
+                '''
+            }
+        }
+        stage('deploy to s3'){
+            steps{
+                sh 'aws s3 cp ./cal/cal/dist s3://the-fit-front/ --recursive'
+            }
+        }
+    }
+}
+</code>
+</pre>
 </details>
 
 <details>
 <summary>
 <b>dokcer spcript</b>
 </summary>
+
+  <pre>
+    <code>
+      FROM openjdk:11 as stage1
+      WORKDIR /app
+      COPY gradlew .
+      COPY gradle gradle
+      COPY build.gradle .
+      COPY settings.gradle .
+      COPY src src
+      # git action에서 실행시 권한 관련 에러가 생기는 것으로 추측
+      RUN chmod +x ./gradlew
+      RUN ./gradlew bootJar
+      FROM openjdk:11
+      WORKDIR /app
+      COPY --from=stage1 /app/build/libs/*.jar /app/app.jar
+      VOLUME /tmp
+      ENTRYPOINT ["java","-jar","app.jar"]
+    </code>
+  </pre>
 </details>
 
 
@@ -183,7 +307,7 @@ print('hello')
 
 ## 매핑 인터페이스 정의
 > 엔티티와 DTO 간 매핑을 위한 인터페이스를 생성합니다. MapStruct는 이 인터페이스를 구현하는 클래스를 자동으로 생성합니다.
-> 
+
 ## 서비스 또는 컨트롤러에서 매핑 사용
 Service 또는 Controller에서 Mapper 인스턴스를 사용하여 DTO와 엔티티 간의 변환을 수행합니다. 필드가 다른 경우 매핑을 하기 위해선 다음과 같이 @Mapping을 사용해서 명시해줘야 합니다.
 매핑하려는 모든 컬럼들이 같다면 별도의 어노테이션으로 표시할 필요가 없지만, 만약 지정해야 하는 경우가 있다면 예시처럼 @Mapping을 이용하여 source에는 매핑값을 가지고 올 대상, target에는 매핑할 대상을 각각 작성해줍니다.
@@ -196,12 +320,31 @@ ource="trainer.id"와 같이 점(.)을 사용하는 이유는, 복합 객체 내
 <summary>
 <b>SSE</b>
 </summary>
+  
+## SSE(Server Sent Event)란?
+> 웹 브라우저에서 서버쪽으로 특정 이벤트를  구독하면, 서버에서 해당 이벤트 발생시 웹브라우저로 이벤트를 보내는 방식
+
+<img src = "https://github.com/beyond-sw-camp/be03-4th-5team-The-FIT-devops-front/blob/804c2f346ec36a86e7db5d463315458c656e7ee0/The%20FIT%20%EC%82%AC%EC%A7%84%20%EC%9E%90%EB%A3%8C/SSE.png">
+
+## 장점
+> 한 번만 연결 요청을 보내면, 연결이 종료될 때까지 재연결 과정 없이 서버에서 웹 브라우저로 데이터를 지속적으로 보낼 수 있다.
+## 단점 
+> 단방향 통신으로 서버에서 웹으로 데이터 전송만 가능하며, 최대 동시 접속 횟수 제한된다.
 </details>
 
 <details>
 <summary>
 <b>Redis pub/subs</b>
 </summary>
+  
+## Redis pub/subs 특징
+1. Publisher가 특정 채널로 메시지를 발행하면, redis가 해당 채널을 구독하고 있는 Subscriber에게 메시지를 전송한다.
+2. Redis Pub/Sub 메시지 지속성이 없다.
+3. 메시지를 전송 후 해당 메시지는 Redis 어디에도 저장되지 않고 삭제된다.
+4. 실시간 데이터 처리에는 매우 적합하지만, 메시지가 저장되지 않는다.
+
+<img src="https://github.com/beyond-sw-camp/be03-4th-5team-The-FIT-devops-front/blob/804c2f346ec36a86e7db5d463315458c656e7ee0/The%20FIT%20%EC%82%AC%EC%A7%84%20%EC%9E%90%EB%A3%8C/redis%20pubsub.png">
+
 </details>
 
 
