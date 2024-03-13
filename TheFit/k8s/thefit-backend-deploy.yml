@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thefit-backend-deploy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: thefit-backend
+  template:
+    metadata:
+      labels:
+        app: thefit-backend
+    spec:
+      containers:
+        - name: thefit-backend
+          image: 346903264902.dkr.ecr.ap-northeast-2.amazonaws.com/thefit:latest
+          ports:
+            - containerPort: 8080
+#          resources:
+#            # 컨테이너가 사용할 수 있는 리소스의 최대치
+#            limits:
+#              cpu: "1"
+#              memory: "500Mi"
+#            # 컨테이너가 시작될 때 보장 받아야하는 최소 자원
+#            requests:
+#              cpu: "0.5"
+#              memory: "250Mi"
+          env:
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: thefit-db
+                  key: DB_HOST
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: thefit-db
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: thefit-db
+                  key: DB_PASSWORD
+            - name: S3_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: thefit-s3
+                  key: S3_NAME
+            - name: S3_ACCESSKEY
+              valueFrom:
+                secretKeyRef:
+                  name: thefit-s3
+                  key: S3_ACCESSKEY
+            - name: S3_SECRETKEY
+              valueFrom:
+                secretKeyRef:
+                  name: thefit-s3
+                  key: S3_SECRETKEY
+            - name: REDIS_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: thefit-redis
+                  key: REDIS_HOST
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thefit-backend-service
+spec:
+  # ClusterIp는 클러스터 내부에서만 접근 가능한 service를 생성
+  type: ClusterIP
+  ports:
+    - name : http
+      port: 80
+      targetPort: 8080
+  selector:
+    app: thefit-backend
